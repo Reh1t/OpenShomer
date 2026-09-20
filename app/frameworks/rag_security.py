@@ -40,20 +40,21 @@ class RAGSecurityInspector:
     @staticmethod
     def _normalize_chunk(text: str) -> str:
         import unicodedata
+
         # 1. Fold visual homoglyphs and canonicalize spacing (NFKC)
-        normalized = unicodedata.normalize('NFKC', text)
-        
+        normalized = unicodedata.normalize("NFKC", text)
+
         # 2. Filter out dangerous Unicode categories:
         # 'Mn': Mark, Nonspacing (Combining characters, accents)
         # 'Cf': Other, Format (Zero-width spaces, Bidi overrides, Soft hyphens)
         # 'Cc': Other, Control (ANSI escapes, raw control chars)
-        return "".join(c for c in normalized if unicodedata.category(c) not in ('Mn', 'Cf', 'Cc'))
+        return "".join(c for c in normalized if unicodedata.category(c) not in ("Mn", "Cf", "Cc"))
 
     def inspect_retrieved_chunk(self, chunk_text: str, source_doc: str = "unknown") -> list[RAGSecurityFinding]:
         """Inspects retrieved context chunks for indirect prompt injection or context poisoning."""
         findings: list[RAGSecurityFinding] = []
         normalized_chunk = self._normalize_chunk(chunk_text)
-        
+
         for pattern, rule_id, severity in self.SUSPICIOUS_CHUNK_PATTERNS:
             if re.search(pattern, normalized_chunk, re.IGNORECASE):
                 findings.append(
