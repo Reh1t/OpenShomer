@@ -58,20 +58,26 @@ class RemediationEngine:
         )
 
     def _rewrite_file_content(self, filename: str, content: str, finding_type: FindingType) -> str:
+        from app.models.findings import Finding, Severity
         from app.qoder.diff_synthesizer import DiffSynthesizer
         from app.qoder.ide import QoderIDE
         from app.validation.owasp_rules import RULE_REGISTRY
-        from app.models.findings import Finding, Severity
-        
+
         # Route OWASP findings via registry
         if finding_type in RULE_REGISTRY:
             dummy_finding = Finding(
-                id="dummy", type=finding_type, severity=Severity.HIGH, 
-                file=filename, issue="dummy", repository="dummy", tool=None
+                id="dummy",
+                type=finding_type,
+                severity=Severity.HIGH,
+                file=filename,
+                issue="dummy",
+                repository="dummy",
+                tool=None,
             )
             # Find the tool name if this is LLM06 and it's a tools.yaml
             if finding_type == FindingType.EXCESSIVE_AGENCY and filename.endswith(("tools.yaml", "tools.yml")):
                 import yaml
+
                 try:
                     data = yaml.safe_load(content)
                     for tool in data.get("tools", []):
@@ -80,7 +86,7 @@ class RemediationEngine:
                             break
                 except Exception:
                     pass
-            
+
             return RULE_REGISTRY[finding_type].synthesize_patch(dummy_finding, content)
 
         ide = QoderIDE(self.workspace_root)

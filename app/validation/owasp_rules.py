@@ -1,13 +1,10 @@
 import ast
-import json
 import re
-import yaml
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 import libcst as cst
-from libcst.codemod.visitors import AddImportsVisitor
-from libcst.metadata import PositionProvider
+import yaml
 
 from app.models.findings import Finding, FindingType, Severity
 
@@ -76,7 +73,7 @@ class IntraProceduralTaintTracker(ast.NodeVisitor):
         is_tainted = False
         if isinstance(node.value, ast.Name) and node.value.id in self.tainted_vars:
             is_tainted = True
-        
+
         for target in node.targets:
             if isinstance(target, ast.Name):
                 if is_tainted:
@@ -129,26 +126,40 @@ class LLM01Rule(OWASPStaticRule):
     def detect(cls, file_path: Path, content: str, workspace_root: Path, finding_id: int) -> list[Finding]:
         findings = []
         if file_path.suffix in {".md", ".prompt", ".txt"}:
-            placeholder = re.search(r"(?:\{\{|\{)\s*(?:user(?:[_-]input)?|input|query|message)\b", content, re.IGNORECASE)
+            placeholder = re.search(
+                r"(?:\{\{|\{)\s*(?:user(?:[_-]input)?|input|query|message)\b", content, re.IGNORECASE
+            )
             if placeholder:
-                is_safe = re.search(r"(?:untrusted|user input boundary|begin_user|end_user|<user_input>)", content, re.IGNORECASE)
+                is_safe = re.search(
+                    r"(?:untrusted|user input boundary|begin_user|end_user|<user_input>)", content, re.IGNORECASE
+                )
                 if not is_safe:
-                    findings.append(cls._create_finding(
-                        finding_id, FindingType.DIRECT_PROMPT_INJECTION, Severity.HIGH,
-                        file_path, "User-controlled prompt data is interpolated without an explicit untrusted-input boundary.",
-                        workspace_root
-                    ))
+                    findings.append(
+                        cls._create_finding(
+                            finding_id,
+                            FindingType.DIRECT_PROMPT_INJECTION,
+                            Severity.HIGH,
+                            file_path,
+                            "User-controlled prompt data is interpolated without an explicit untrusted-input boundary.",
+                            workspace_root,
+                        )
+                    )
         elif file_path.suffix == ".py":
             try:
                 tree = ast.parse(content)
                 tracker = IntraProceduralTaintTracker()
                 tracker.visit(tree)
                 if tracker.llm01_violations:
-                    findings.append(cls._create_finding(
-                        finding_id, FindingType.DIRECT_PROMPT_INJECTION, Severity.HIGH,
-                        file_path, "Untrusted input traced to prompt formatting sink without boundary.",
-                        workspace_root
-                    ))
+                    findings.append(
+                        cls._create_finding(
+                            finding_id,
+                            FindingType.DIRECT_PROMPT_INJECTION,
+                            Severity.HIGH,
+                            file_path,
+                            "Untrusted input traced to prompt formatting sink without boundary.",
+                            workspace_root,
+                        )
+                    )
             except SyntaxError:
                 pass
         return findings
@@ -158,9 +169,18 @@ class LLM01Rule(OWASPStaticRule):
         if finding.file.endswith((".md", ".prompt", ".txt")):
             modified = original_content
             placeholders = [
-                "{{user_input}}", "{user_input}", "{{input}}", "{input}", 
-                "{{query}}", "{query}", "{{message}}", "{message}",
-                "{{user-input}}", "{user-input}", "{{user_query}}", "{user_query}"
+                "{{user_input}}",
+                "{user_input}",
+                "{{input}}",
+                "{input}",
+                "{{query}}",
+                "{query}",
+                "{{message}}",
+                "{message}",
+                "{{user-input}}",
+                "{user-input}",
+                "{{user_query}}",
+                "{user_query}",
             ]
             for p in placeholders:
                 # If it's in the text but not already wrapped securely
@@ -175,7 +195,7 @@ class LLM01Rule(OWASPStaticRule):
                     if p == "{message}" and "{{message}}" in original_content:
                         continue
                     modified = modified.replace(p, f"<user_input>{p}</user_input>")
-            
+
             if "<user_input>" in modified and "<security_directive>" not in modified:
                 modified += (
                     "\n\n<security_directive>\n"
@@ -198,28 +218,37 @@ class LLM02SecretTransformer(cst.CSTTransformer):
         for name in node.names:
             if name.name.value == "os":
                 self.os_imported = True
-        return super().visit_Import(node)
+        super().visit_Import(node)
 
     def visit_ImportFrom(self, node: cst.ImportFrom) -> None:
         if node.module and node.module.value == "os":
             self.os_imported = True
-        return super().visit_ImportFrom(node)
+        super().visit_ImportFrom(node)
 
     def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
         if self.modified and not self.os_imported:
             import_stmt = cst.SimpleStatementLine(body=[cst.Import(names=[cst.ImportAlias(name=cst.Name("os"))])])
-            
+
             # Find insertion point (after docstring, before __future__)
             insert_idx = 0
             for i, stmt in enumerate(updated_node.body):
-                if isinstance(stmt, cst.SimpleStatementLine) and isinstance(stmt.body[0], cst.Expr) and isinstance(stmt.body[0].value, cst.SimpleString):
+                if (
+                    isinstance(stmt, cst.SimpleStatementLine)
+                    and isinstance(stmt.body[0], cst.Expr)
+                    and isinstance(stmt.body[0].value, cst.SimpleString)
+                ):
                     insert_idx = i + 1
                     continue
-                if isinstance(stmt, cst.SimpleStatementLine) and isinstance(stmt.body[0], cst.ImportFrom) and stmt.body[0].module and stmt.body[0].module.value == "__future__":
+                if (
+                    isinstance(stmt, cst.SimpleStatementLine)
+                    and isinstance(stmt.body[0], cst.ImportFrom)
+                    and stmt.body[0].module
+                    and stmt.body[0].module.value == "__future__"
+                ):
                     insert_idx = i + 1
                     continue
                 break
-                
+
             new_body = list(updated_node.body)
             new_body.insert(insert_idx, import_stmt)
             return updated_node.with_changes(body=new_body)
@@ -232,10 +261,9 @@ class LLM02SecretTransformer(cst.CSTTransformer):
             self.modified = True
             return cst.Call(
                 func=cst.Attribute(
-                    value=cst.Attribute(value=cst.Name("os"), attr=cst.Name("environ")),
-                    attr=cst.Name("get")
+                    value=cst.Attribute(value=cst.Name("os"), attr=cst.Name("environ")), attr=cst.Name("get")
                 ),
-                args=[cst.Arg(cst.SimpleString('"SECRET_KEY"'))]
+                args=[cst.Arg(cst.SimpleString('"SECRET_KEY"'))],
             )
         return updated_node
 
@@ -250,10 +278,16 @@ class LLM02Rule(OWASPStaticRule):
             re.IGNORECASE,
         )
         if secret:
-            findings.append(cls._create_finding(
-                finding_id, FindingType.SENSITIVE_INFORMATION_DISCLOSURE, Severity.CRITICAL,
-                file_path, "Hardcoded secret detected.", workspace_root
-            ))
+            findings.append(
+                cls._create_finding(
+                    finding_id,
+                    FindingType.SENSITIVE_INFORMATION_DISCLOSURE,
+                    Severity.CRITICAL,
+                    file_path,
+                    "Hardcoded secret detected.",
+                    workspace_root,
+                )
+            )
         return findings
 
     @classmethod
@@ -287,11 +321,17 @@ class LLM06Rule(OWASPStaticRule):
                     )
                     bounded = bool(tool.get("parameter_bounds") or tool.get("requires_approval"))
                     if dangerous and not bounded:
-                        findings.append(cls._create_finding(
-                            finding_id, FindingType.EXCESSIVE_AGENCY, Severity.HIGH,
-                            file_path, f"Tool '{name}' exposes a dangerous capability without approval or parameter bounds.",
-                            workspace_root, tool=name
-                        ))
+                        findings.append(
+                            cls._create_finding(
+                                finding_id,
+                                FindingType.EXCESSIVE_AGENCY,
+                                Severity.HIGH,
+                                file_path,
+                                f"Tool '{name}' exposes a dangerous capability without approval or parameter bounds.",
+                                workspace_root,
+                                tool=name,
+                            )
+                        )
             except Exception:
                 pass
         elif file_path.suffix == ".py":
@@ -300,11 +340,16 @@ class LLM06Rule(OWASPStaticRule):
                 tracker = IntraProceduralTaintTracker()
                 tracker.visit(tree)
                 if tracker.llm06_violations:
-                    findings.append(cls._create_finding(
-                        finding_id, FindingType.EXCESSIVE_AGENCY, Severity.HIGH,
-                        file_path, "Untrusted input flows into dangerous system sink without validation.",
-                        workspace_root
-                    ))
+                    findings.append(
+                        cls._create_finding(
+                            finding_id,
+                            FindingType.EXCESSIVE_AGENCY,
+                            Severity.HIGH,
+                            file_path,
+                            "Untrusted input flows into dangerous system sink without validation.",
+                            workspace_root,
+                        )
+                    )
             except SyntaxError:
                 pass
         return findings
@@ -316,7 +361,6 @@ class LLM06Rule(OWASPStaticRule):
             # and triggering false positive guardrails for tool deletion.
             lines = original_content.splitlines(keepends=True)
             out_lines = []
-            in_tool = False
             tool_indent = ""
             for line in lines:
                 out_lines.append(line)
@@ -325,8 +369,7 @@ class LLM06Rule(OWASPStaticRule):
                     # Extract the tool name
                     parts = stripped.split(":", 1)
                     if len(parts) == 2 and parts[1].strip().strip("'\"") == finding.tool:
-                        in_tool = True
-                        tool_indent = line[:len(line) - len(stripped)] + "  "
+                        tool_indent = line[: len(line) - len(stripped)] + "  "
                         # We just found our tool, inject requires_approval right after
                         out_lines.append(f"{tool_indent}requires_approval: true\n")
             return "".join(out_lines)
@@ -338,14 +381,27 @@ class LLM07Rule(OWASPStaticRule):
     def detect(cls, file_path: Path, content: str, workspace_root: Path, finding_id: int) -> list[Finding]:
         findings = []
         if file_path.suffix in {".md", ".prompt", ".txt"}:
-            has_system_instruction = bool(re.search(r"(?:system prompt|system instructions|you are an assistant)", content, re.IGNORECASE))
-            has_defense = bool(re.search(r"(?:do not|never|must not).{0,40}(?:reveal|disclose|hidden instructions|system prompt)", content, re.IGNORECASE | re.DOTALL))
+            has_system_instruction = bool(
+                re.search(r"(?:system prompt|system instructions|you are an assistant)", content, re.IGNORECASE)
+            )
+            has_defense = bool(
+                re.search(
+                    r"(?:do not|never|must not).{0,40}(?:reveal|disclose|hidden instructions|system prompt)",
+                    content,
+                    re.IGNORECASE | re.DOTALL,
+                )
+            )
             if has_system_instruction and not has_defense:
-                findings.append(cls._create_finding(
-                    finding_id, FindingType.SYSTEM_PROMPT_LEAKAGE, Severity.HIGH,
-                    file_path, "The system prompt lacks a clear instruction preventing disclosure.",
-                    workspace_root
-                ))
+                findings.append(
+                    cls._create_finding(
+                        finding_id,
+                        FindingType.SYSTEM_PROMPT_LEAKAGE,
+                        Severity.HIGH,
+                        file_path,
+                        "The system prompt lacks a clear instruction preventing disclosure.",
+                        workspace_root,
+                    )
+                )
         return findings
 
     @classmethod

@@ -41,5 +41,6 @@ def mock_github_client():
 @pytest.fixture(autouse=True)
 def restore_demo_agent():
     import subprocess
+
     yield
-    subprocess.run(['git', 'restore', 'demo/vulnerable-agent'], check=False)
+    subprocess.run(["git", "restore", "demo/vulnerable-agent"], check=False)

@@ -40,10 +40,12 @@ def test_cli_scan_demo_vulnerable_agent_exit_code():
     assert "security risk(s) found" in result.stdout
     assert "SHOMER-" in result.stdout
 
+
 def test_cli_scan_demo_vulnerable_agent_no_exit_code():
     result = runner.invoke(app, ["scan", "demo/vulnerable-agent", "--no-exit-code"])
     assert result.exit_code == 0
     assert "security risk(s) found" in result.stdout
+
 
 def test_cli_scan_json_output():
     result = runner.invoke(app, ["scan", "demo/vulnerable-agent", "--json", "--no-exit-code"])

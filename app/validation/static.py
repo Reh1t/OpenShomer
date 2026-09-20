@@ -1,10 +1,9 @@
 import json
-import re
 from pathlib import Path
 
 import yaml
 
-from app.models.findings import Finding, FindingType, Severity
+from app.models.findings import Finding
 
 
 class StaticPolicyChecker:
@@ -46,13 +45,13 @@ class StaticPolicyChecker:
 
         findings: list[Finding] = []
         finding_id = 1
-        
+
         # Collect all files to scan
         files_to_scan = self._prompt_files(workspace_root)
         tools_file = workspace_root / "agent/tools.yaml"
         if tools_file.exists():
             files_to_scan.append(tools_file)
-            
+
         # Also include python files for AST scanning
         for py_file in workspace_root.rglob("*.py"):
             if ".venv" not in py_file.parts and "tests" not in py_file.parts:
@@ -61,7 +60,7 @@ class StaticPolicyChecker:
         for file_path in files_to_scan:
             if not file_path.exists() or not file_path.is_file():
                 continue
-            
+
             try:
                 content = file_path.read_text(encoding="utf-8")
             except Exception:

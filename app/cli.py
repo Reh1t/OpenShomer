@@ -28,12 +28,12 @@ def scan_workspace(workspace_root: Path) -> list[Finding]:
 
     # 1. Use centralized OWASP Static Rules
     from app.validation.static import StaticPolicyChecker
+
     checker = StaticPolicyChecker()
     owasp_findings = checker.detect_findings(workspace_root)
     findings.extend(owasp_findings)
 
     # 1.5 Restore MCP JSON Checks
-    import json
     mcp_file = workspace_root / "mcp/mcp_servers.json"
     if mcp_file.exists():
         try:
@@ -81,11 +81,12 @@ def scan_workspace(workspace_root: Path) -> list[Finding]:
                         )
                     )
                     finding_idx += 1
-        except Exception as e:
+        except Exception:
             pass
 
     # 2. v0.2 Richer Agent Graphs: Skill files, LangChain, LlamaIndex, and CrewAI
     from app.frameworks import scan_all_agent_frameworks
+
     framework_findings = scan_all_agent_frameworks(workspace_root)
     findings.extend(framework_findings)
 
@@ -235,7 +236,7 @@ def fix_command(
             for rel_file, content in remediation.rewritten_contents.items():
                 file_path = workspace_path / rel_file
                 file_path.write_text(content, encoding="utf-8")
-                
+
             if auto_pr:
                 pr_url = pr_manager.open_pr(
                     finding, investigation, validation, remediation.diff, token=github_token, repo_name=repo_name
